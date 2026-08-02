@@ -293,7 +293,7 @@ void print_mode_info(ProgramMode mode)
         printf("Mode : Default\n\n");
 
         printf("For advanced options, run:\n\n");
-        printf("    image2pdf Custom\n\n");
+        printf("    ./image2pdf Custom\n\n");
     }
 }
 
