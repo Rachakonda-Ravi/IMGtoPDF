@@ -13,6 +13,13 @@
 #else
 #include <unistd.h>
 #endif
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#include <direct.h>
+#else
+#include <unistd.h>
+#endif
 
 #include <hpdf.h>
 
@@ -27,6 +34,7 @@
 #define LOG_FOLDER         "Logs"
 #define PROGRAM_NAME       "Image to PDF Converter"
 #define PROGRAM_VERSION    "2.0"
+#define MAX_ERRORS        MAX_IMAGES
 
 typedef enum
 {
@@ -44,8 +52,10 @@ typedef enum
 
 typedef enum
 {
-    FIT = 1,
-    FILL
+    PAGE_FIT,
+
+    PAGE_FILL
+
 } PageMode;
 
 typedef enum
@@ -88,17 +98,17 @@ typedef struct
 {
     ProgramMode mode;
 
-    SortMode sort;
+    char output_pdf[MAX_FILENAME];
+
+    SortMode sort_mode;
 
     PageMode page_mode;
 
     int open_pdf;
 
-    char pdf_name[MAX_FILENAME];
+    int overwrite_existing;
 
     PDFMetadata metadata;
-
-    int overwrite_existing;
 
 } ProgramOptions;
 
@@ -106,21 +116,15 @@ typedef struct
 {
     int total_images;
 
+    int converted_images;
+
+    int failed_loads;
+
     int jpg;
 
     int png;
 
-    int processed;
-
-    int skipped;
-
     long long total_size;
-
-    double time_taken;
-
-    int failed_loads;
-    
-    int duplicate_names;
 
 } Statistics;
 
@@ -131,6 +135,22 @@ typedef struct
     char reason[256];
 
 } ErrorEntry;
+
+typedef struct
+{
+    ProgramOptions *options;
+
+    Statistics *stats;
+
+    ErrorEntry *errors;
+
+    int *error_count;
+
+    char log_file[512];
+
+    char error_file[512];
+
+} ProgramContext;
 /*=========================================================
                     FUNCTION PROTOTYPES
 =========================================================*/
@@ -176,15 +196,16 @@ void get_output_filename(ProgramOptions *options);
 
 void get_custom_options(ProgramOptions *options);
 
-int confirm_proceed(void);
-
 /*--------------------- PDF Functions -----------------------*/
 int create_pdf(ImageInfo images[],
                int count,
                ProgramOptions *options,
                Statistics *stats,
                ErrorEntry errors[],
-               int *error_count);
+               int *error_count,
+               const char *log_file);
+
+void open_pdf(const char *filename);
 
 /*---------------------- Log Functions ----------------------*/
 void write_log(const ProgramOptions *options,
@@ -213,6 +234,34 @@ int cmp_size_asc(const void *a, const void *b);
 
 int cmp_size_desc(const void *a, const void *b);
 
+/*---------------------- PDF FOUNDATION ----------------------------*/
+HPDF_Doc create_pdf_document(void);
+
+void apply_pdf_metadata(HPDF_Doc pdf,
+                        const ProgramOptions *options);
+
+HPDF_Page create_page(HPDF_Doc pdf);
+
+HPDF_Image load_image_file(HPDF_Doc pdf,
+                           const ImageInfo *image);
+
+void calculate_fit(float img_w,
+                   float img_h,
+                   float page_w,
+                   float page_h,
+                   float *draw_x,
+                   float *draw_y,
+                   float *draw_w,
+                   float *draw_h);
+
+void calculate_fill(float img_w,
+                    float img_h,
+                    float page_w,
+                    float page_h,
+                    float *draw_x,
+                    float *draw_y,
+                    float *draw_w,
+                    float *draw_h);
 /*=========================================================
                     GENERAL UTILITIES
 =========================================================*/
@@ -386,19 +435,21 @@ void get_log_filename(const char *pdfname,
 
     get_datetime(date, time_str);
 
-    sprintf(log_file,
-            "%s/%s_%s_%s.log",
-            LOG_FOLDER,
-            pdfname,
-            date,
-            time_str);
+    snprintf(log_file,
+         512,
+         "%s/%s_%s_%s.log",
+         LOG_FOLDER,
+         pdfname,
+         date,
+         time_str);
 
-    sprintf(error_file,
-            "%s/%s_%s_%s_error.log",
-            LOG_FOLDER,
-            pdfname,
-            date,
-            time_str);
+    snprintf(error_file,
+         512,
+         "%s/%s_%s_%s_error.log",
+         LOG_FOLDER,
+         pdfname,
+         date,
+         time_str);
 }
 
 /*=========================================================
@@ -674,7 +725,10 @@ void get_output_filename(ProgramOptions *options)
     if (ext && !strcasecmp(ext, ".pdf"))
         *ext = '\0';
 
-    sprintf(outfile, "%s.pdf", options->output_pdf);
+    snprintf(outfile,
+         sizeof(outfile),
+         "%s.pdf",
+         options->output_pdf);
 
     options->overwrite_existing = 0;
 
@@ -841,3 +895,680 @@ int confirm_proceed(ImageInfo images[],
     return yes_no_prompt("Proceed with PDF creation?");
 }
 
+/*=========================================================
+                    PDF FOUNDATION
+=========================================================*/
+
+/*---------------------------------------------------------
+    Create PDF Document
+---------------------------------------------------------*/
+HPDF_Doc create_pdf_document(void)
+{
+    HPDF_Doc pdf;
+
+    pdf = HPDF_New(NULL, NULL);
+
+    if (pdf == NULL)
+    {
+        printf("\nError : Unable to create PDF document.\n");
+        return NULL;
+    }
+
+    HPDF_SetCompressionMode(pdf, HPDF_COMP_ALL);
+
+    return pdf;
+}
+
+/*---------------------------------------------------------
+    Apply PDF Metadata
+---------------------------------------------------------*/
+void apply_pdf_metadata(HPDF_Doc pdf,
+                        const ProgramOptions *options)
+{
+    if (pdf == NULL)
+        return;
+
+    if (strlen(options->metadata.title) > 0)
+        HPDF_SetInfoAttr(pdf,
+                         HPDF_INFO_TITLE,
+                         options->metadata.title);
+
+    if (strlen(options->metadata.author) > 0)
+        HPDF_SetInfoAttr(pdf,
+                         HPDF_INFO_AUTHOR,
+                         options->metadata.author);
+
+    if (strlen(options->metadata.subject) > 0)
+        HPDF_SetInfoAttr(pdf,
+                         HPDF_INFO_SUBJECT,
+                         options->metadata.subject);
+
+    if (strlen(options->metadata.keywords) > 0)
+        HPDF_SetInfoAttr(pdf,
+                         HPDF_INFO_KEYWORDS,
+                         options->metadata.keywords);
+}
+
+/*---------------------------------------------------------
+    Create Standard A4 Page
+---------------------------------------------------------*/
+HPDF_Page create_page(HPDF_Doc pdf)
+{
+    HPDF_Page page;
+
+    page = HPDF_AddPage(pdf);
+
+    if (page == NULL)
+        return NULL;
+
+    HPDF_Page_SetWidth(page, PAGE_WIDTH);
+    HPDF_Page_SetHeight(page, PAGE_HEIGHT);
+
+    return page;
+}
+
+/*---------------------------------------------------------
+    Load Image (JPEG / PNG)
+---------------------------------------------------------*/
+HPDF_Image load_image_file(HPDF_Doc pdf,
+                           const ImageInfo *image)
+{
+    if (image == NULL)
+        return NULL;
+
+    switch (image->type)
+    {
+        case JPEG:
+            return HPDF_LoadJpegImageFromFile(pdf,
+                                              image->filename);
+
+        case PNG:
+            return HPDF_LoadPngImageFromFile(pdf,
+                                             image->filename);
+
+        default:
+            return NULL;
+    }
+}
+
+/*---------------------------------------------------------
+    Calculate FIT Dimensions
+---------------------------------------------------------*/
+void calculate_fit(float img_w,
+                   float img_h,
+                   float page_w,
+                   float page_h,
+                   float *draw_x,
+                   float *draw_y,
+                   float *draw_w,
+                   float *draw_h)
+{
+    float scale_x = page_w / img_w;
+    float scale_y = page_h / img_h;
+    float scale = (scale_x < scale_y) ? scale_x : scale_y;
+
+    *draw_w = img_w * scale;
+    *draw_h = img_h * scale;
+
+    *draw_x = (page_w - *draw_w) / 2.0f;
+    *draw_y = (page_h - *draw_h) / 2.0f;
+}
+
+/*---------------------------------------------------------
+    Calculate FILL Dimensions
+---------------------------------------------------------*/
+void calculate_fill(float img_w,
+                    float img_h,
+                    float page_w,
+                    float page_h,
+                    float *draw_x,
+                    float *draw_y,
+                    float *draw_w,
+                    float *draw_h)
+{
+    float scale_x = page_w / img_w;
+    float scale_y = page_h / img_h;
+    float scale = (scale_x > scale_y) ? scale_x : scale_y;
+
+    *draw_w = img_w * scale;
+    *draw_h = img_h * scale;
+
+    *draw_x = (page_w - *draw_w) / 2.0f;
+    *draw_y = (page_h - *draw_h) / 2.0f;
+}
+
+/*=========================================================
+                        PDF ENGINE
+=========================================================*/
+
+/*---------------------------------------------------------
+    Add One Image to PDF
+---------------------------------------------------------*/
+int add_image_to_pdf(HPDF_Doc pdf,
+                     ImageInfo *image,
+                     ProgramOptions *options,
+                     ErrorEntry errors[],
+                     int *error_count)
+{
+    HPDF_Page page;
+    HPDF_Image himg;
+
+    float img_w;
+    float img_h;
+
+    float x, y;
+    float w, h;
+
+    page = create_page(pdf);
+
+    if(page == NULL)
+        return 0;
+
+    himg = load_image_file(pdf, image);
+
+    if(himg == NULL)
+    {
+        if (*error_count < MAX_ERRORS)
+        {
+            strncpy(errors[*error_count].filename,
+                    image->filename,
+                    MAX_FILENAME - 1);
+                
+            errors[*error_count].filename[MAX_FILENAME - 1] = '\0';
+
+            strncpy(errors[*error_count].reason,
+                    "Unable to load image.",
+                    sizeof(errors[*error_count].reason) - 1);
+                
+            errors[*error_count].reason[
+                sizeof(errors[*error_count].reason) - 1] = '\0';
+            
+            (*error_count)++;
+        }
+
+        image->loaded = 0;
+
+        printf("\nFailed to load : %s\n",
+               image->filename);
+
+        if(!yes_no_prompt("Continue with remaining images?"))
+            return -1;
+
+        return 0;
+    }
+
+    image->loaded = 1;
+
+    img_w = (float)HPDF_Image_GetWidth(himg);
+    img_h = (float)HPDF_Image_GetHeight(himg);
+
+    image->width = img_w;
+    image->height = img_h;
+
+    if(options->page_mode == PAGE_FIT)
+    {
+        calculate_fit(img_w,
+                      img_h,
+                      PAGE_WIDTH,
+                      PAGE_HEIGHT,
+                      &x,
+                      &y,
+                      &w,
+                      &h);
+    }
+    else
+    {
+        calculate_fill(img_w,
+                       img_h,
+                       PAGE_WIDTH,
+                       PAGE_HEIGHT,
+                       &x,
+                       &y,
+                       &w,
+                       &h);
+    }
+
+    HPDF_Page_DrawImage(page,
+                        himg,
+                        x,
+                        y,
+                        w,
+                        h);
+
+    return 1;
+}
+
+/*---------------------------------------------------------
+    Create Complete PDF
+---------------------------------------------------------*/
+int create_pdf(ImageInfo images[],
+               int count,
+               ProgramOptions *options,
+               Statistics *stats,
+               ErrorEntry errors[],
+               int *error_count,
+               const char *log_file)
+{
+    HPDF_Doc pdf;
+
+    char outfile[MAX_FILENAME + 10];
+
+    int result;
+
+    pdf = create_pdf_document();
+
+    if(pdf == NULL)
+        return 0;
+
+    apply_pdf_metadata(pdf,
+                       options);
+
+    snprintf(outfile,
+         sizeof(outfile),
+         "%s.pdf",
+         options->output_pdf);
+
+    printf("\nCreating PDF...\n\n");
+
+    for(int i = 0; i < count; i++)
+    {
+        printf("[%3d/%3d] %-40s",
+               i + 1,
+               count,
+               images[i].filename);
+
+        fflush(stdout);
+
+        result = add_image_to_pdf(pdf,
+                                  &images[i],
+                                  options,
+                                  errors,
+                                  error_count);
+
+        if(result == -1)
+        {
+            printf(" Aborted\n");
+
+            HPDF_Free(pdf);
+
+            return 0;
+        }
+
+        if(result == 0)
+        {
+            printf(" Failed\n");
+
+            stats->failed_loads++;
+
+            continue;
+        }
+
+        printf(" OK\n");
+
+        stats->converted_images++;
+    }
+
+    if(HPDF_SaveToFile(pdf,
+                       outfile) != HPDF_OK)
+    {
+        printf("\nUnable to save PDF.\n");
+
+        HPDF_Free(pdf);
+
+        return 0;
+    }
+
+    HPDF_Free(pdf);
+
+    printf("\nPDF created successfully.\n");
+
+    printf("Output : %s\n",
+           outfile);
+
+    if(options->open_pdf)
+    open_pdf(outfile);
+
+    return 1;
+}
+
+/*---------------------------------------------------------
+    Open Generated PDF
+---------------------------------------------------------*/
+void open_pdf(const char *filename)
+{
+#ifdef _WIN32
+
+    ShellExecute(NULL,
+                 "open",
+                 filename,
+                 NULL,
+                 NULL,
+                 SW_SHOWNORMAL);
+
+#elif __APPLE__
+
+    char command[512];
+
+    snprintf(command,
+             sizeof(command),
+             "open \"%s\"",
+             filename);
+
+    system(command);
+
+#else
+
+    char command[512];
+
+    snprintf(command,
+             sizeof(command),
+             "xdg-open \"%s\" >/dev/null 2>&1 &",
+             filename);
+
+    system(command);
+
+#endif
+}
+
+/*=========================================================
+                        LOGGING
+=========================================================*/
+
+/*---------------------------------------------------------
+    Write Conversion Log
+---------------------------------------------------------*/
+void write_log(const ProgramOptions *options,
+               const Statistics *stats,
+               const char *log_file)
+{
+    FILE *fp;
+    char size[32];
+    char date[20];
+    char time_str[20];
+
+    fp = fopen(log_file, "w");
+
+    if(fp == NULL)
+    {
+        printf("Unable to create log file.\n");
+        return;
+    }
+
+    get_datetime(date, time_str);
+
+    format_size(stats->total_size, size);
+
+    fprintf(fp,
+            "============================================================\n");
+
+    fprintf(fp,
+            "               IMAGE TO PDF CONVERTER LOG\n");
+
+    fprintf(fp,
+            "============================================================\n\n");
+
+    fprintf(fp,"Date               : %s\n",date);
+    fprintf(fp,"Time               : %s\n\n",time_str);
+
+    fprintf(fp,"Output PDF         : %s.pdf\n",
+            options->output_pdf);
+
+    fprintf(fp,"Images Found       : %d\n",
+            stats->total_images);
+
+    fprintf(fp,"Images Converted   : %d\n",
+            stats->converted_images);
+
+    fprintf(fp,"Images Failed      : %d\n",
+            stats->failed_loads);
+
+    fprintf(fp,"JPEG Images        : %d\n",
+            stats->jpg);
+
+    fprintf(fp,"PNG Images         : %d\n",
+            stats->png);
+
+    fprintf(fp,"Total Image Size   : %s\n",
+            size);
+
+    fprintf(fp,"\nConversion Completed Successfully.\n");
+
+    fclose(fp);
+}
+
+/*---------------------------------------------------------
+    Write Error Log
+---------------------------------------------------------*/
+void write_error_log(const ErrorEntry errors[],
+                     int error_count,
+                     const char *error_file)
+{
+    FILE *fp;
+
+    if(error_count == 0)
+        return;
+
+    fp = fopen(error_file,"w");
+
+    if(fp == NULL)
+        return;
+
+    fprintf(fp,
+            "============================================================\n");
+
+    fprintf(fp,
+            "                    ERROR REPORT\n");
+
+    fprintf(fp,
+            "============================================================\n\n");
+
+    for(int i=0;i<error_count;i++)
+    {
+        fprintf(fp,
+                "%3d. %-40s : %s\n",
+                i+1,
+                errors[i].filename,
+                errors[i].reason);
+    }
+
+    fclose(fp);
+}
+
+/*=========================================================
+                    FINAL REPORT
+=========================================================*/
+
+/*---------------------------------------------------------
+    Print Final Summary
+---------------------------------------------------------*/
+void print_summary(const ProgramOptions *options,
+                   const Statistics *stats,
+                   const char *log_file)
+{
+    char size[32];
+
+    format_size(stats->total_size,size);
+
+    printf("\n");
+    printf("============================================================\n");
+    printf("                  CONVERSION COMPLETE\n");
+    printf("============================================================\n\n");
+
+    printf("Output PDF        : %s.pdf\n",
+           options->output_pdf);
+
+    printf("Images Converted  : %d\n",
+           stats->converted_images);
+
+    printf("Images Failed     : %d\n",
+           stats->failed_loads);
+
+    printf("JPEG Images       : %d\n",
+           stats->jpg);
+
+    printf("PNG Images        : %d\n",
+           stats->png);
+
+    printf("Total Image Size  : %s\n",
+           size);
+
+    printf("Log File          : %s\n",
+           log_file);
+
+    printf("\n============================================================\n");
+}
+
+/*=========================================================
+                        CLEANUP
+=========================================================*/
+
+/*---------------------------------------------------------
+    Cleanup
+---------------------------------------------------------*/
+void cleanup(ImageInfo images[],
+             int count)
+{
+    (void)images;
+    (void)count;
+
+    /* Reserved for future cleanup.
+       Keeping this function allows easy expansion later,
+       such as freeing dynamically allocated memory,
+       deleting temporary files, etc. */
+}
+
+/*=========================================================
+                            MAIN
+=========================================================*/
+
+int main(int argc, char *argv[])
+{
+    /*---------------- Variables ----------------*/
+
+    ImageInfo images[MAX_IMAGES];
+    Statistics stats = {0};
+    ProgramOptions options = {0};
+    ErrorEntry errors[MAX_ERRORS];
+
+    int error_count = 0;
+    int image_count;
+
+    char log_file[512];
+    char error_file[512];
+
+    /*---------------- Program Mode ----------------*/
+
+    options.mode =
+        (argc > 1 && !strcasecmp(argv[1], "Custom"))
+            ? CUSTOM_MODE
+            : DEFAULT_MODE;
+
+    /*---------------- Program Startup ----------------*/
+
+    print_header();
+    print_mode_info(options.mode);
+
+    create_logs_folder();
+
+    /*---------------- Output PDF ----------------*/
+
+    get_output_filename(&options);
+
+    /*---------------- Scan Images ----------------*/
+
+    image_count = scan_images(images, &stats);
+
+    if (image_count == 0)
+    {
+        printf("\nNo supported JPG or PNG images found.\n");
+
+        pause_program();
+        return EXIT_FAILURE;
+    }
+
+    /*---------------- User Options ----------------*/
+
+    if (options.mode == CUSTOM_MODE)
+    {
+        get_custom_options(&options);
+    }
+    else
+    {
+        options.sort_mode = SORT_NAME_ASC;
+        options.page_mode = PAGE_FIT;
+        options.open_pdf = 0;
+        options.overwrite_existing = 0;
+    }
+
+    /*---------------- Sort Images ----------------*/
+
+    sort_images(images,
+                image_count,
+                options.sort_mode);
+
+    /*---------------- Preview ----------------*/
+
+    print_image_list(images,
+                     image_count,
+                     &stats);
+
+    /*---------------- Confirmation ----------------*/
+
+    if (!confirm_proceed(images,
+                         image_count,
+                         &stats,
+                         &options))
+    {
+        printf("\nOperation cancelled by user.\n");
+
+        cleanup(images, image_count);
+
+        return EXIT_SUCCESS;
+    }
+
+    /*---------------- Prepare Log Files ----------------*/
+
+    get_log_filename(options.output_pdf,
+                     log_file,
+                     error_file);
+
+    /*---------------- Create PDF ----------------*/
+
+    if (!create_pdf(images,
+                    image_count,
+                    &options,
+                    &stats,
+                    errors,
+                    &error_count,
+                    log_file))
+    {
+        printf("\nPDF creation failed.\n");
+
+        cleanup(images, image_count);
+
+        return EXIT_FAILURE;
+    }
+
+    /*---------------- Save Logs ----------------*/
+
+    write_log(&options,
+              &stats,
+              log_file);
+
+    write_error_log(errors,
+                    error_count,
+                    error_file);
+
+    /*---------------- Final Summary ----------------*/
+
+    print_summary(&options,
+                  &stats,
+                  log_file);
+
+    /*---------------- Cleanup ----------------*/
+
+    cleanup(images,
+            image_count);
+
+    return EXIT_SUCCESS;
+}
