@@ -61,8 +61,14 @@ typedef enum
 typedef enum
 {
     DEFAULT_MODE,
-    CUSTOM_MODE
+    ADAVANCED_MODE
 } ProgramMode;
+
+typedef struct
+{
+    char name[MAX_FILENAME];
+    char path[MAX_FILENAME];
+} SubFolderInfo;
 
 typedef struct
 {
@@ -173,6 +179,11 @@ void pause_program(void);
 /*---------------------- File Utilities ---------------------*/
 void create_logs_folder(void);
 
+int scan_subfolders(const char *root,
+                    SubFolderInfo folders[]);
+
+int folder_has_images(const char *directory);
+
 int file_exists(const char *filename);
 
 long long get_file_size(const char *filename);
@@ -180,6 +191,9 @@ long long get_file_size(const char *filename);
 void format_size(long long bytes, char *buffer);
 
 void get_datetime(char *date, char *time);
+
+int convert_directory(const char *directory,
+                      ProgramOptions *options);
 
 void get_log_filename(const char *pdfname,
                       char *log_file,
@@ -298,9 +312,9 @@ void print_header(void)
 ---------------------------------------------------------*/
 void print_mode_info(ProgramMode mode)
 {
-    if (mode == CUSTOM_MODE)
+    if (mode == ADAVANCED_MODE)
     {
-        printf("Mode : Custom\n\n");
+        printf("Mode : Advanced\n\n");
         printf("Advanced options enabled.\n\n");
     }
     else
@@ -308,7 +322,7 @@ void print_mode_info(ProgramMode mode)
         printf("Mode : Default\n\n");
 
         printf("For advanced options, run:\n\n");
-        printf("    ./image2pdf Custom\n\n");
+        printf("    ./image2pdf ADAVANCED\n\n");
     }
 }
 
@@ -368,15 +382,15 @@ void parse_command_line(int argc,
 
     for (int i = 1; i < argc; i++)
     {
-        if (!strcasecmp(argv[i], "Custom"))
+        if (!strcasecmp(argv[i], "ADAVANCED"))
         {
-            options->mode = CUSTOM_MODE;
+            options->mode = ADAVANCED_MODE;
         }
 
         else if (!strcmp(argv[i], "--split"))
         {
             options->split_mode = 1;
-            options->mode = CUSTOM_MODE;
+            options->mode = ADAVANCED_MODE;
         }
 
         else if (!strcmp(argv[i], "-o"))
@@ -406,7 +420,7 @@ void parse_command_line(int argc,
 
             options->source_directory[MAX_FILENAME - 1] = '\0';
 
-            options->mode = CUSTOM_MODE;
+            options->mode = ADAVANCED_MODE;
         }
     }
 }
@@ -414,6 +428,61 @@ void parse_command_line(int argc,
 /*=========================================================
                     FILE UTILITIES
 =========================================================*/
+
+
+/*---------------------------------------------------------
+    Directory conversion
+---------------------------------------------------------*/
+
+int convert_directory(const char *directory,
+                      ProgramOptions *options)
+{
+    ImageInfo images[MAX_IMAGES];
+
+    Statistics stats = {0};
+
+    ErrorEntry errors[MAX_ERRORS];
+
+    int error_count = 0;
+
+    char log_file[512];
+    char error_file[512];
+
+    int image_count;
+
+
+    image_count = scan_images(directory,
+                              images,
+                              &stats);
+
+
+    if (image_count == 0)
+        return 0;
+
+
+    sort_images(images,
+                image_count,
+                options->sort_mode);
+
+
+    print_image_list(images,
+                     image_count,
+                     &stats);
+
+
+    get_log_filename(options->output_pdf,
+                     log_file,
+                     error_file);
+
+
+    return create_pdf(images,
+                      image_count,
+                      options,
+                      &stats,
+                      errors,
+                      &error_count,
+                      log_file);
+}   
 
 /*---------------------------------------------------------
     Create Logs Folder
@@ -429,6 +498,94 @@ void create_logs_folder(void)
         else
             printf("Warning : Unable to create log folder.\n\n");
     }
+}
+
+/*---------------------------------------------------------
+    Check If a Subfolder Exists
+---------------------------------------------------------*/
+int scan_subfolders(const char *root,
+                    SubFolderInfo folders[])
+{
+    DIR *dir;
+    struct dirent *entry;
+
+    int count = 0;
+
+    dir = opendir(root);
+
+    if (!dir)
+        return 0;
+
+    while ((entry = readdir(dir)) != NULL)
+    {
+
+        if (!strcmp(entry->d_name, ".") ||
+            !strcmp(entry->d_name, ".."))
+            continue;
+
+        char fullpath[MAX_FILENAME];
+
+        snprintf(fullpath,
+                 sizeof(fullpath),
+                 "%s/%s",
+                 root,
+                 entry->d_name);
+
+        struct stat st;
+
+        if (stat(fullpath, &st) == 0 &&
+            S_ISDIR(st.st_mode))
+        {
+            strncpy(folders[count].name,
+                    entry->d_name,
+                    MAX_FILENAME - 1);
+
+            strncpy(folders[count].path,
+                    fullpath,
+                    MAX_FILENAME - 1);
+
+            count++;
+        }
+    }
+
+    closedir(dir);
+
+    return count;
+}
+
+int folder_has_images(const char *directory)
+{
+    DIR *dir;
+    struct dirent *entry;
+
+    printf("\nScanning folder: %s\n", directory);
+
+    dir = opendir(directory);
+
+    if (!dir)
+    {
+        printf("Cannot open folder!\n");
+        return 0;
+    }
+
+    while ((entry = readdir(dir)) != NULL)
+    {
+        if (!strcmp(entry->d_name, ".") ||
+            !strcmp(entry->d_name, ".."))
+            continue;
+
+        if (is_supported_image(entry->d_name))
+        {
+            closedir(dir);
+            return 1;
+        }
+    }
+
+    printf("   -> No Images\n");
+
+    closedir(dir);
+
+    return 0;
 }
 
 /*---------------------------------------------------------
@@ -643,18 +800,11 @@ int is_supported_image(const char *filename)
     const char *ext = strrchr(filename, '.');
 
     if (ext == NULL)
-        return -1;
+        return 0;
 
-    if (!strcasecmp(ext, ".jpg"))
-        return JPEG;
-
-    if (!strcasecmp(ext, ".jpeg"))
-        return JPEG;
-
-    if (!strcasecmp(ext, ".png"))
-        return PNG;
-
-    return -1;
+    return (!strcasecmp(ext, ".jpg")  ||
+            !strcasecmp(ext, ".jpeg") ||
+            !strcasecmp(ext, ".png"));
 }
 
 /*---------------------------------------------------------
@@ -682,7 +832,7 @@ int scan_images(const char *directory,
     {
         int type = is_supported_image(entry->d_name);
 
-        if (type == -1)
+        if (type == 0)
             continue;
 
         if (count >= MAX_IMAGES)
@@ -834,13 +984,13 @@ void get_output_filename(ProgramOptions *options)
 }
 
 /*---------------------------------------------------------
-    Read Advanced (Custom) Options
+    Read Advanced Options
 ---------------------------------------------------------*/
 void get_custom_options(ProgramOptions *options)
 {
     int choice;
 
-    printf("\n================ CUSTOM OPTIONS ================\n");
+    printf("\n================ ADAVANCED OPTIONS ================\n");
 
     /*---------------- Sorting ----------------*/
     printf("\nImage Sorting\n");
@@ -1135,8 +1285,48 @@ void calculate_fill(float img_w,
 int create_split_pdfs(const char *root_directory,
                       ProgramOptions *options)
 {
-    printf("\nSplit Mode\n");
-    printf("Directory : %s\n", root_directory);
+    SubFolderInfo folders[256];
+
+    int folder_count;
+
+
+    folder_count =
+        scan_subfolders(root_directory,
+                        folders);
+
+
+    printf("\nFound %d folders\n",
+           folder_count);
+
+
+    for (int i = 0; i < folder_count; i++)
+    {
+
+        if (!folder_has_images(folders[i].path))
+        {
+            printf("\nSkipping %s (no images)\n",
+                   folders[i].name);
+
+            continue;
+        }
+
+
+        printf("\nConverting %s\n",
+               folders[i].name);
+
+
+        strncpy(options->output_pdf,
+                folders[i].name,
+                MAX_FILENAME - 1);
+
+
+        options->output_pdf[MAX_FILENAME - 1] = '\0';
+
+
+        convert_directory(folders[i].path,
+                          options);
+    }
+
 
     return EXIT_SUCCESS;
 }
@@ -1171,7 +1361,7 @@ int add_image_to_pdf(HPDF_Doc pdf,
         if (*error_count < MAX_ERRORS)
         {
             strncpy(errors[*error_count].filename,
-                    image->filename,
+                    image->fullpath,
                     MAX_FILENAME - 1);
                 
             errors[*error_count].filename[MAX_FILENAME - 1] = '\0';
@@ -1189,7 +1379,7 @@ int add_image_to_pdf(HPDF_Doc pdf,
         image->loaded = 0;
 
         printf("\nFailed to load : %s\n",
-               image->filename);
+               image->fullpath);
 
         if(!yes_no_prompt("Continue with remaining images?"))
             return -1;
@@ -1600,23 +1790,14 @@ int main(int argc, char *argv[])
         }
     }
 
-    /*---------------- Scan Images ----------------*/
+    /*---------------- Directry ----------------*/
 
-    image_count = scan_images(options.source_directory,
-                          images,
-                          &stats);
-                          
-    if (image_count == 0)
-    {
-        printf("\nNo supported JPG or PNG images found.\n");
-
-        pause_program();
-        return EXIT_FAILURE;
-    }
-
+    convert_directory(options.source_directory,
+                  &options);
+    
     /*---------------- User Options ----------------*/
 
-    if (options.mode == CUSTOM_MODE)
+    if (options.mode == ADAVANCED_MODE)
     {
         get_custom_options(&options);
     }
@@ -1627,14 +1808,6 @@ int main(int argc, char *argv[])
         options.open_pdf = 0;
         options.overwrite_existing = 0;
     }
-
-    /*---------------- Sort Images ----------------*/
-
-    sort_images(images,
-                image_count,
-                options.sort_mode);
-
-    /*---------------- Preview ----------------*/
 
     print_image_list(images,
                      image_count,
