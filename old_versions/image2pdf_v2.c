@@ -100,12 +100,6 @@ typedef struct
 
     char output_pdf[MAX_FILENAME];
 
-    char source_directory[MAX_FILENAME];
-
-    int output_from_cli;
-
-    int split_mode;
-
     SortMode sort_mode;
 
     PageMode page_mode;
@@ -201,10 +195,6 @@ void print_image_list(ImageInfo images[],
 void get_output_filename(ProgramOptions *options);
 
 void get_custom_options(ProgramOptions *options);
-
-void parse_command_line(int argc,
-                        char *argv[],
-                        ProgramOptions *options);
 
 /*--------------------- PDF Functions -----------------------*/
 int create_pdf(ImageInfo images[],
@@ -342,68 +332,6 @@ void pause_program(void)
     getchar();
     getchar();
 #endif
-}
-
-/*---------------------------------------------------------
-    Parse Command Line Arguments
----------------------------------------------------------*/
-void parse_command_line(int argc,
-                        char *argv[],
-                        ProgramOptions *options)
-{
-    /* Defaults */
-
-    options->mode = DEFAULT_MODE;
-
-    strcpy(options->source_directory, ".");
-
-    options->output_from_cli = 0;
-
-    options->split_mode = 0;
-
-    for (int i = 1; i < argc; i++)
-    {
-        if (!strcasecmp(argv[i], "Custom"))
-        {
-            options->mode = CUSTOM_MODE;
-        }
-
-        else if (!strcmp(argv[i], "--split"))
-        {
-            options->split_mode = 1;
-            options->mode = CUSTOM_MODE;
-        }
-
-        else if (!strcmp(argv[i], "-o"))
-        {
-            if (i + 1 < argc)
-            {
-                strncpy(options->output_pdf,
-                        argv[++i],
-                        MAX_FILENAME - 1);
-
-                options->output_pdf[MAX_FILENAME - 1] = '\0';
-
-                char *ext = strrchr(options->output_pdf, '.');
-
-                if (ext && !strcasecmp(ext, ".pdf"))
-                    *ext = '\0';
-
-                options->output_from_cli = 1;
-            }
-        }
-
-        else
-        {
-            strncpy(options->source_directory,
-                    argv[i],
-                    MAX_FILENAME - 1);
-
-            options->source_directory[MAX_FILENAME - 1] = '\0';
-
-            options->mode = CUSTOM_MODE;
-        }
-    }
 }
 
 /*=========================================================
@@ -1530,9 +1458,10 @@ int main(int argc, char *argv[])
 
     /*---------------- Program Mode ----------------*/
 
-    parse_command_line(argc,
-                   argv,
-                   &options);
+    options.mode =
+        (argc > 1 && !strcasecmp(argv[1], "Custom"))
+            ? CUSTOM_MODE
+            : DEFAULT_MODE;
 
     /*---------------- Program Startup ----------------*/
 
@@ -1541,31 +1470,9 @@ int main(int argc, char *argv[])
 
     create_logs_folder();
 
-  /*---------------- Output PDF ----------------*/
+    /*---------------- Output PDF ----------------*/
 
-    if (!options.output_from_cli)
-    {
-        get_output_filename(&options);
-    }
-    else
-    {
-        char outfile[MAX_FILENAME + 10];
-
-        snprintf(outfile,
-                sizeof(outfile),
-                "%s.pdf",
-                options.output_pdf);
-
-        options.overwrite_existing = 0;
-
-        if (file_exists(outfile))
-        {
-            printf("\nOutput file \"%s\" already exists.\n",
-                outfile);
-
-            return EXIT_FAILURE;
-        }
-    }
+    get_output_filename(&options);
 
     /*---------------- Scan Images ----------------*/
 
