@@ -68,6 +68,8 @@ typedef struct
 {
     char filename[MAX_FILENAME];
 
+    char fullpath[512];
+
     ImageType type;
 
     long long filesize;
@@ -186,7 +188,8 @@ void get_log_filename(const char *pdfname,
 /*--------------------- Image Handling ----------------------*/
 int is_supported_image(const char *filename);
 
-int scan_images(ImageInfo images[],
+int scan_images(const char *directory,
+                ImageInfo images[],
                 Statistics *stats);
 
 void sort_images(ImageInfo images[],
@@ -206,6 +209,8 @@ void parse_command_line(int argc,
                         char *argv[],
                         ProgramOptions *options);
 
+int create_split_pdfs(const char *root_directory,
+                      ProgramOptions *options);
 /*--------------------- PDF Functions -----------------------*/
 int create_pdf(ImageInfo images[],
                int count,
@@ -655,16 +660,16 @@ int is_supported_image(const char *filename)
 /*---------------------------------------------------------
     Scan Current Directory for Images
 ---------------------------------------------------------*/
-int scan_images(ImageInfo images[],
+int scan_images(const char *directory,
+                ImageInfo images[],
                 Statistics *stats)
 {
     DIR *dir;
     struct dirent *entry;
-
+    char fullpath[512];
     int count = 0;
 
-    dir = opendir(".");
-
+    dir = opendir(directory);
     if (dir == NULL)
     {
         perror("opendir");
@@ -684,16 +689,26 @@ int scan_images(ImageInfo images[],
             break;
 
         strncpy(images[count].filename,
-                entry->d_name,
-                MAX_FILENAME - 1);
+            entry->d_name,
+            MAX_FILENAME - 1);
+        snprintf(images[count].fullpath,
+            sizeof(images[count].fullpath),
+            "%s/%s",
+            directory,
+            entry->d_name);
 
         images[count].filename[MAX_FILENAME - 1] = '\0';
 
         images[count].type = (ImageType)type;
 
-        images[count].filesize =
-            get_file_size(entry->d_name);
+        snprintf(fullpath,
+            sizeof(fullpath),
+            "%s/%s",
+            directory,
+            entry->d_name);
 
+        images[count].filesize =
+            get_file_size(fullpath);
         images[count].width = 0;
 
         images[count].height = 0;
@@ -1052,11 +1067,11 @@ HPDF_Image load_image_file(HPDF_Doc pdf,
     {
         case JPEG:
             return HPDF_LoadJpegImageFromFile(pdf,
-                                              image->filename);
+                                              image->fullpath);
 
         case PNG:
             return HPDF_LoadPngImageFromFile(pdf,
-                                             image->filename);
+                                             image->fullpath);
 
         default:
             return NULL;
@@ -1112,6 +1127,19 @@ void calculate_fill(float img_w,
 /*=========================================================
                         PDF ENGINE
 =========================================================*/
+
+/*---------------------------------------------------------
+    Create Split PDFs (One PDF per Subfolder)
+---------------------------------------------------------*/
+
+int create_split_pdfs(const char *root_directory,
+                      ProgramOptions *options)
+{
+    printf("\nSplit Mode\n");
+    printf("Directory : %s\n", root_directory);
+
+    return EXIT_SUCCESS;
+}
 
 /*---------------------------------------------------------
     Add One Image to PDF
@@ -1540,7 +1568,12 @@ int main(int argc, char *argv[])
     print_mode_info(options.mode);
 
     create_logs_folder();
-
+    
+    if (options.split_mode)
+    {
+        return create_split_pdfs(options.source_directory,
+                                &options);
+    }
   /*---------------- Output PDF ----------------*/
 
     if (!options.output_from_cli)
@@ -1569,8 +1602,10 @@ int main(int argc, char *argv[])
 
     /*---------------- Scan Images ----------------*/
 
-    image_count = scan_images(images, &stats);
-
+    image_count = scan_images(options.source_directory,
+                          images,
+                          &stats);
+                          
     if (image_count == 0)
     {
         printf("\nNo supported JPG or PNG images found.\n");
