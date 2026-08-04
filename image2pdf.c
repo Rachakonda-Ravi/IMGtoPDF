@@ -38,6 +38,7 @@
 
 typedef enum
 {
+    IMAGE_UNKNOWN = -1,
     JPEG,
     PNG
 } ImageType;
@@ -61,7 +62,7 @@ typedef enum
 typedef enum
 {
     DEFAULT_MODE,
-    ADAVANCED_MODE
+    ADVANCED_MODE
 } ProgramMode;
 
 typedef struct
@@ -154,17 +155,22 @@ typedef struct
 {
     ProgramOptions *options;
 
-    Statistics *stats;
+    Statistics stats;
 
-    ErrorEntry *errors;
+    ErrorEntry errors[MAX_ERRORS];
 
-    int *error_count;
+    int error_count;
 
     char log_file[512];
 
     char error_file[512];
 
+    ImageInfo images[MAX_IMAGES];
+
+    int image_count;
+
 } ProgramContext;
+
 /*=========================================================
                     FUNCTION PROTOTYPES
 =========================================================*/
@@ -193,14 +199,14 @@ void format_size(long long bytes, char *buffer);
 void get_datetime(char *date, char *time);
 
 int convert_directory(const char *directory,
-                      ProgramOptions *options);
+                      ProgramContext *ctx);
 
 void get_log_filename(const char *pdfname,
                       char *log_file,
                       char *error_file);
 
 /*--------------------- Image Handling ----------------------*/
-int is_supported_image(const char *filename);
+ImageType is_supported_image(const char *filename);
 
 int scan_images(const char *directory,
                 ImageInfo images[],
@@ -217,7 +223,7 @@ void print_image_list(ImageInfo images[],
 /*--------------------- User Interface ----------------------*/
 void get_output_filename(ProgramOptions *options);
 
-void get_custom_options(ProgramOptions *options);
+void get_advanced_options(ProgramOptions *options);
 
 void parse_command_line(int argc,
                         char *argv[],
@@ -233,6 +239,8 @@ int create_pdf(ImageInfo images[],
                ErrorEntry errors[],
                int *error_count,
                const char *log_file);
+
+int prepare_output_filename(ProgramOptions *options);
 
 void open_pdf(const char *filename);
 
@@ -312,7 +320,7 @@ void print_header(void)
 ---------------------------------------------------------*/
 void print_mode_info(ProgramMode mode)
 {
-    if (mode == ADAVANCED_MODE)
+    if (mode == ADVANCED_MODE)
     {
         printf("Mode : Advanced\n\n");
         printf("Advanced options enabled.\n\n");
@@ -322,7 +330,7 @@ void print_mode_info(ProgramMode mode)
         printf("Mode : Default\n\n");
 
         printf("For advanced options, run:\n\n");
-        printf("    ./image2pdf ADAVANCED\n\n");
+        printf("    ./image2pdf ADVANCED\n\n");
     }
 }
 
@@ -343,7 +351,7 @@ int yes_no_prompt(const char *message)
             return 1;
 
         if (choice == 'N' || choice == 'n')
-            return 0;
+            return EXIT_SUCCESS;
 
         printf("Invalid choice. Please enter Y or N.\n\n");
     }
@@ -382,15 +390,15 @@ void parse_command_line(int argc,
 
     for (int i = 1; i < argc; i++)
     {
-        if (!strcasecmp(argv[i], "ADAVANCED"))
+        if (!strcasecmp(argv[i], "ADVANCED"))
         {
-            options->mode = ADAVANCED_MODE;
+            options->mode = ADVANCED_MODE;
         }
 
         else if (!strcmp(argv[i], "--split"))
         {
             options->split_mode = 1;
-            options->mode = ADAVANCED_MODE;
+            options->mode = ADVANCED_MODE;
         }
 
         else if (!strcmp(argv[i], "-o"))
@@ -420,7 +428,7 @@ void parse_command_line(int argc,
 
             options->source_directory[MAX_FILENAME - 1] = '\0';
 
-            options->mode = ADAVANCED_MODE;
+            options->mode = ADVANCED_MODE;
         }
     }
 }
@@ -435,53 +443,99 @@ void parse_command_line(int argc,
 ---------------------------------------------------------*/
 
 int convert_directory(const char *directory,
-                      ProgramOptions *options)
+                      ProgramContext *ctx)
 {
-    ImageInfo images[MAX_IMAGES];
+    ProgramOptions *options = ctx->options;
 
-    Statistics stats = {0};
+     Statistics stats = {0};
 
     ErrorEntry errors[MAX_ERRORS];
 
     int error_count = 0;
 
     char log_file[512];
+
     char error_file[512];
 
-    int image_count;
+    
+    ctx->image_count =
+        scan_images(directory,
+                    ctx->images,
+                    &ctx->stats);
 
+    print_image_list(ctx->images,
+                 ctx->image_count,
+                 &ctx->stats);
 
-    image_count = scan_images(directory,
-                              images,
-                              &stats);
+    create_pdf(ctx->images,
+           ctx->image_count,
+           options,
+           &ctx->stats,
+           ctx->errors,
+           &ctx->error_count,
+           ctx->log_file);
 
+    if (ctx->image_count == 0)
+    {
+        printf("\nNo supported images found.\n");
+        return EXIT_SUCCESS;
+    }
 
-    if (image_count == 0)
-        return 0;
-
-
-    sort_images(images,
-                image_count,
+    sort_images(ctx->images,
+                ctx->image_count,
                 options->sort_mode);
 
+    print_image_list(ctx->images,
+                     ctx->image_count,
+                     &ctx->stats);
 
-    print_image_list(images,
-                     image_count,
-                     &stats);
+    if (options->mode == ADVANCED_MODE)
+    {
+        get_custom_options(options);
+    }
 
+    if (!prepare_output_filename(options))
+        return EXIT_FAILURE;
+
+    if (!options->output_from_cli)
+    {
+        get_output_filename(options);
+    }
 
     get_log_filename(options->output_pdf,
-                     log_file,
-                     error_file);
+                     ctx->log_file,
+                     ctx->error_file);
 
+    if (!confirm_conversion())
+    {
+        printf("\nCancelled.\n");
+        return EXIT_SUCCESS;
+    }
 
-    return create_pdf(images,
-                      image_count,
-                      options,
-                      &stats,
-                      errors,
-                      &error_count,
-                      log_file);
+    create_pdf(ctx->images,
+               ctx->image_count,
+               options,
+               &ctx->stats,
+               ctx->errors,
+               &ctx->error_count,
+               ctx->log_file);
+
+    write_log(ctx->options,
+            ctx->log_file,
+            &ctx->stats);
+
+    if (ctx->error_count > 0)
+    {
+        write_error_log(ctx->error_file,
+                        ctx->errors,
+                        ctx->error_count);
+    }
+
+    print_summary(ctx->options,
+            ctx->log_file,
+            &ctx->stats);
+
+    return EXIT_SUCCESS;
 }   
 
 /*---------------------------------------------------------
@@ -514,7 +568,7 @@ int scan_subfolders(const char *root,
     dir = opendir(root);
 
     if (!dir)
-        return 0;
+        return EXIT_SUCCESS;
 
     while ((entry = readdir(dir)) != NULL)
     {
@@ -565,7 +619,7 @@ int folder_has_images(const char *directory)
     if (!dir)
     {
         printf("Cannot open folder!\n");
-        return 0;
+        return EXIT_SUCCESS;
     }
 
     while ((entry = readdir(dir)) != NULL)
@@ -585,7 +639,7 @@ int folder_has_images(const char *directory)
 
     closedir(dir);
 
-    return 0;
+    return EXIT_SUCCESS;
 }
 
 /*---------------------------------------------------------
@@ -606,7 +660,7 @@ long long get_file_size(const char *filename)
     struct stat st;
 
     if (stat(filename, &st) != 0)
-        return 0;
+        return EXIT_SUCCESS;
 
     return (long long)st.st_size;
 }
@@ -795,16 +849,21 @@ void sort_images(ImageInfo images[],
 /*---------------------------------------------------------
     Check Supported Image Type
 ---------------------------------------------------------*/
-int is_supported_image(const char *filename)
+ImageType is_supported_image(const char *filename)
 {
     const char *ext = strrchr(filename, '.');
 
     if (ext == NULL)
-        return 0;
+        return IMAGE_UNKNOWN;
 
-    return (!strcasecmp(ext, ".jpg")  ||
-            !strcasecmp(ext, ".jpeg") ||
-            !strcasecmp(ext, ".png"));
+    if (!strcasecmp(ext, ".jpg") ||
+        !strcasecmp(ext, ".jpeg"))
+        return JPEG;
+
+    if (!strcasecmp(ext, ".png"))
+        return PNG;
+
+    return -1;
 }
 
 /*---------------------------------------------------------
@@ -823,16 +882,16 @@ int scan_images(const char *directory,
     if (dir == NULL)
     {
         perror("opendir");
-        return 0;
+        return EXIT_SUCCESS;
     }
 
     memset(stats, 0, sizeof(Statistics));
 
     while ((entry = readdir(dir)) != NULL)
     {
-        int type = is_supported_image(entry->d_name);
+        ImageType type = is_supported_image(entry->d_name);
 
-        if (type == 0)
+        if (type == IMAGE_UNKNOWN)
             continue;
 
         if (count >= MAX_IMAGES)
@@ -849,7 +908,7 @@ int scan_images(const char *directory,
 
         images[count].filename[MAX_FILENAME - 1] = '\0';
 
-        images[count].type = (ImageType)type;
+        images[count].type = type;
 
         snprintf(fullpath,
             sizeof(fullpath),
@@ -949,6 +1008,34 @@ void print_image_list(ImageInfo images[],
 /*---------------------------------------------------------
     Get Output PDF Name
 ---------------------------------------------------------*/
+int prepare_output_filename(ProgramOptions *options)
+{
+    if (options->output_from_cli)
+    {
+        char outfile[MAX_FILENAME + 10];
+
+        snprintf(outfile,
+                 sizeof(outfile),
+                 "%s.pdf",
+                 options->output_pdf);
+
+        if (!options->overwrite_existing &&
+            file_exists(outfile))
+        {
+            printf("\nOutput file \"%s\" already exists.\n",
+                   outfile);
+
+            return EXIT_SUCCESS;
+        }
+
+        return 1;
+    }
+
+    get_output_filename(options);
+
+    return 1;
+}
+
 void get_output_filename(ProgramOptions *options)
 {
     char outfile[MAX_FILENAME + 10];
@@ -986,11 +1073,11 @@ void get_output_filename(ProgramOptions *options)
 /*---------------------------------------------------------
     Read Advanced Options
 ---------------------------------------------------------*/
-void get_custom_options(ProgramOptions *options)
+void get_advanced_options(ProgramOptions *options)
 {
     int choice;
 
-    printf("\n================ ADAVANCED OPTIONS ================\n");
+    printf("\n================ ADVANCED OPTIONS ================\n");
 
     /*---------------- Sorting ----------------*/
     printf("\nImage Sorting\n");
@@ -1286,47 +1373,44 @@ int create_split_pdfs(const char *root_directory,
                       ProgramOptions *options)
 {
     SubFolderInfo folders[256];
-
     int folder_count;
 
+    folder_count = scan_subfolders(root_directory, folders);
 
-    folder_count =
-        scan_subfolders(root_directory,
-                        folders);
+    printf("\nFound %d folders\n", folder_count);
 
-
-    printf("\nFound %d folders\n",
-           folder_count);
-
+    if (folder_count == 0)
+    {
+        printf("\nNo subfolders found.\n");
+        return EXIT_SUCCESS;
+    }
 
     for (int i = 0; i < folder_count; i++)
     {
+        ProgramOptions folder_options = *options;
 
         if (!folder_has_images(folders[i].path))
         {
-            printf("\nSkipping %s (no images)\n",
+            printf("\nSkipping \"%s\" (No supported images)\n",
                    folders[i].name);
-
             continue;
         }
 
+        printf("\n============================================================\n");
+        printf("Converting Folder : %s\n", folders[i].name);
+        printf("============================================================\n");
 
-        printf("\nConverting %s\n",
-               folders[i].name);
-
-
-        strncpy(options->output_pdf,
+        strncpy(folder_options.output_pdf,
                 folders[i].name,
                 MAX_FILENAME - 1);
 
+        folder_options.output_pdf[MAX_FILENAME - 1] = '\0';
 
-        options->output_pdf[MAX_FILENAME - 1] = '\0';
-
+        folder_options.output_from_cli = 1;
 
         convert_directory(folders[i].path,
-                          options);
+                          &folder_options);
     }
-
 
     return EXIT_SUCCESS;
 }
@@ -1352,7 +1436,7 @@ int add_image_to_pdf(HPDF_Doc pdf,
     page = create_page(pdf);
 
     if(page == NULL)
-        return 0;
+        return EXIT_SUCCESS;
 
     himg = load_image_file(pdf, image);
 
@@ -1384,7 +1468,7 @@ int add_image_to_pdf(HPDF_Doc pdf,
         if(!yes_no_prompt("Continue with remaining images?"))
             return -1;
 
-        return 0;
+        return EXIT_SUCCESS;
     }
 
     image->loaded = 1;
@@ -1448,7 +1532,7 @@ int create_pdf(ImageInfo images[],
     pdf = create_pdf_document();
 
     if(pdf == NULL)
-        return 0;
+        return EXIT_SUCCESS;
 
     apply_pdf_metadata(pdf,
                        options);
@@ -1481,7 +1565,7 @@ int create_pdf(ImageInfo images[],
 
             HPDF_Free(pdf);
 
-            return 0;
+            return EXIT_SUCCESS;
         }
 
         if(result == 0)
@@ -1505,7 +1589,7 @@ int create_pdf(ImageInfo images[],
 
         HPDF_Free(pdf);
 
-        return 0;
+        return EXIT_SUCCESS;
     }
 
     HPDF_Free(pdf);
@@ -1733,143 +1817,31 @@ void cleanup(ImageInfo images[],
 
 int main(int argc, char *argv[])
 {
-    /*---------------- Variables ----------------*/
+    ProgramOptions options;
 
-    ImageInfo images[MAX_IMAGES];
-    Statistics stats = {0};
-    ProgramOptions options = {0};
-    ErrorEntry errors[MAX_ERRORS];
+    ProgramContext ctx;
 
-    int error_count = 0;
-    int image_count;
+    memset(&ctx, 0, sizeof(ctx));
 
-    char log_file[512];
-    char error_file[512];
-
-    /*---------------- Program Mode ----------------*/
+    ctx.options = &options;
+    initialize_options(&options);
 
     parse_command_line(argc,
-                   argv,
-                   &options);
-
-    /*---------------- Program Startup ----------------*/
+                       argv,
+                       &options);
 
     print_header();
+
     print_mode_info(options.mode);
 
     create_logs_folder();
-    
+
     if (options.split_mode)
     {
         return create_split_pdfs(options.source_directory,
-                                &options);
-    }
-  /*---------------- Output PDF ----------------*/
-
-    if (!options.output_from_cli)
-    {
-        get_output_filename(&options);
-    }
-    else
-    {
-        char outfile[MAX_FILENAME + 10];
-
-        snprintf(outfile,
-                sizeof(outfile),
-                "%s.pdf",
-                options.output_pdf);
-
-        options.overwrite_existing = 0;
-
-        if (file_exists(outfile))
-        {
-            printf("\nOutput file \"%s\" already exists.\n",
-                outfile);
-
-            return EXIT_FAILURE;
-        }
+                                 &options);
     }
 
-    /*---------------- Directry ----------------*/
-
-    convert_directory(options.source_directory,
-                  &options);
-    
-    /*---------------- User Options ----------------*/
-
-    if (options.mode == ADAVANCED_MODE)
-    {
-        get_custom_options(&options);
-    }
-    else
-    {
-        options.sort_mode = SORT_NAME_ASC;
-        options.page_mode = PAGE_FIT;
-        options.open_pdf = 0;
-        options.overwrite_existing = 0;
-    }
-
-    print_image_list(images,
-                     image_count,
-                     &stats);
-
-    /*---------------- Confirmation ----------------*/
-
-    if (!confirm_proceed(images,
-                         image_count,
-                         &stats,
-                         &options))
-    {
-        printf("\nOperation cancelled by user.\n");
-
-        cleanup(images, image_count);
-
-        return EXIT_SUCCESS;
-    }
-
-    /*---------------- Prepare Log Files ----------------*/
-
-    get_log_filename(options.output_pdf,
-                     log_file,
-                     error_file);
-
-    /*---------------- Create PDF ----------------*/
-
-    if (!create_pdf(images,
-                    image_count,
-                    &options,
-                    &stats,
-                    errors,
-                    &error_count,
-                    log_file))
-    {
-        printf("\nPDF creation failed.\n");
-
-        cleanup(images, image_count);
-
-        return EXIT_FAILURE;
-    }
-
-    /*---------------- Save Logs ----------------*/
-
-    write_log(&options,
-              &stats,
-              log_file);
-
-    write_error_log(errors,
-                    error_count,
-                    error_file);
-
-    /*---------------- Final Summary ----------------*/
-
-    print_summary(&options,
-                  &stats,
-                  log_file);
-
-    /*---------------- Cleanup ----------------*/
-
-    cleanup(images,
-            image_count);
-
-    return EXIT_SUCCESS;
+    return convert_directory(options.source_directory,
+                         &ctx);
 }
