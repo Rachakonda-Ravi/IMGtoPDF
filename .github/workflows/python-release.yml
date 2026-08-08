@@ -5,15 +5,21 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
+
 jobs:
   release-python:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
 
       - name: Check changed Python files
         id: changes
@@ -28,6 +34,7 @@ jobs:
             echo "release=false" >> $GITHUB_OUTPUT
           fi
 
+
       - name: Create Release ZIP
         if: steps.changes.outputs.release == 'true'
         run: |
@@ -36,6 +43,7 @@ jobs:
           cp Python/*.py release/
 
           zip -r Python-tools-release.zip release
+
 
       - name: Create GitHub Release
         if: steps.changes.outputs.release == 'true'
