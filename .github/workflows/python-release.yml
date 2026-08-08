@@ -1,0 +1,46 @@
+name: Python Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release-python:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check changed Python files
+        id: changes
+        run: |
+          COUNT=$(git diff --name-only HEAD~1 HEAD | grep "^Python/.*\.py$" | wc -l)
+
+          echo "Python changes: $COUNT"
+
+          if [ "$COUNT" -ge 2 ]; then
+            echo "release=true" >> $GITHUB_OUTPUT
+          else
+            echo "release=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release ZIP
+        if: steps.changes.outputs.release == 'true'
+        run: |
+          mkdir release
+
+          cp Python/*.py release/
+
+          zip -r Python-tools-release.zip release
+
+      - name: Create GitHub Release
+        if: steps.changes.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: python-update-${{ github.run_number }}
+          name: Python Tools Update ${{ github.run_number }}
+          files: Python-tools-release.zip

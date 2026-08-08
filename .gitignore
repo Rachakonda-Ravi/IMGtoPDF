@@ -1,18 +1,28 @@
-# =====================================
-# Ignore everything
-# =====================================
+# Ignore everything by default
 *
 
-# =====================================
-# Allow root project files
-# =====================================
+# Allow root files
 !README.md
-!LICENSE
 !.gitignore
-!image2pdf.c
+!LICENSE
 
-# =====================================
-# Allow version archive
-# =====================================
-!old_versions/
-!old_versions/*.c
+# Allow main folders
+!C/
+!Python/
+!Web-App/
+
+# Allow GitHub Actions workflows
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
+
+# Allow everything inside Web-App
+!Web-App/**
+
+# Allow only C source and markdown files
+!C/**/*.c
+!C/**/*.md
+
+# Allow only Python files and markdown files
+!Python/**/*.py
+!Python/**/*.md

@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+
+<meta charset="UTF-8">
+
+
+<meta name="viewport"
+content="width=device-width, initial-scale=1.0">
+
+
+
+<title>
+IMG & PDF Utilities - PDF Merge
+</title>
+
+
+<link rel="stylesheet"
+href="../css/style.css">
+
+<link rel="stylesheet"
+href="../css/merge.css">
+
+
+<link rel="icon" type="image/x-icon" href="../assets/favicon.ico">
+
+
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Poppins:wght@300;400;500;600;700&display=swap"
+rel="stylesheet">
+
+
+</head>
+
+
+
+
+
+
+
+<body>
+
+
+<div class="background-glow glow-one"></div>
+
+<div class="background-glow glow-two"></div>
+
+
+
+
+
+
+
+<header class="header">
+
+
+<nav class="navbar">
+
+
+
+<div class="logo">
+
+
+<span>
+IMG
+</span>
+
+& PDF Utilities
+
+
+</div>
+
+
+
+
+
+
+
+<div class="nav-menu">
+
+
+
+<a href="../index.html">
+
+Home
+
+</a>
+
+
+
+
+<a href="img-to-pdf.html">
+
+🖼 Image → PDF
+
+</a>
+
+
+
+
+
+<a class="active"
+href="pdf-merge.html">
+
+📚 PDF Merge
+
+</a>
+
+
+
+
+</div>
+
+
+
+</nav>
+
+
+</header>
+
+
+
+
+
+
+
+
+
+<main class="merge-page">
+
+
+
+
+
+
+
+<section class="merge-header">
+
+
+
+<div class="badge">
+
+📚 PDF Utility
+
+</div>
+
+
+
+
+
+<h1>
+
+
+Merge PDF
+
+<span>
+Files Easily
+
+</span>
+
+
+</h1>
+
+
+
+
+
+<p>
+
+
+Combine multiple PDF documents into one
+organized file with custom ordering and metadata.
+
+
+</p>
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+<section class="merge-layout">
+
+
+
+
+
+
+
+<!-- Upload -->
+
+<div class="merge-card upload-card">
+
+
+
+
+
+<div class="pdf-upload"
+id="pdfUploadBox">
+
+
+
+<div class="upload-icon">
+
+📄
+
+</div>
+
+
+
+
+
+<h2>
+
+Drop PDF Files Here
+
+</h2>
+
+
+
+
+
+<p>
+
+Drag & drop PDFs or select files manually
+
+</p>
+
+
+
+
+
+<span>
+
+PDF • ZIP Support
+
+</span>
+
+
+
+
+
+
+<input
+
+type="file"
+
+id="pdfInput"
+
+multiple
+
+accept=".pdf,.zip"
+
+>
+
+
+
+
+
+
+<label
+
+for="pdfInput"
+
+class="upload-button">
+
+
+Choose Files
+
+
+</label>
+
+
+
+
+
+</div>
+
+
+
+
+
+</div>
+
+
+
+
+
+
+
+
+
+<!-- Settings -->
+
+<div class="merge-card settings-card">
+
+
+
+
+
+<h2>
+
+Merge Settings
+
+</h2>
+
+
+
+
+
+
+
+<div class="input-group">
+
+
+<label>
+
+Output File Name
+
+</label>
+
+
+<input
+
+id="outputName"
+
+placeholder="Merged_Document"
+
+>
+
+
+</div>
+
+
+
+
+
+
+
+<div class="input-group">
+
+
+<label>
+
+Author Name
+
+</label>
+
+
+<input
+
+id="authorName"
+
+placeholder="Your name"
+
+>
+
+
+</div>
+
+
+
+
+
+
+
+
+
+<div class="option-box">
+
+
+
+<label>
+
+
+<input
+
+type="checkbox"
+
+id="bookmarkOption"
+
+checked
+
+>
+
+
+Create bookmarks
+
+
+</label>
+
+
+
+
+
+<label>
+
+
+<input
+
+type="checkbox"
+
+id="tocOption"
+
+
+>
+
+
+Generate table of contents
+
+
+</label>
+
+
+
+</div>
+
+
+
+
+
+
+</div>
+
+
+
+
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+<!-- PDF Queue -->
+
+
+<section class="merge-card pdf-section"
+id="pdfArea"
+style="display:none;">
+
+
+
+
+
+<div class="section-title">
+
+
+<h2>
+
+Selected PDFs
+
+</h2>
+
+
+<p>
+
+Drag to change order
+
+</p>
+
+
+</div>
+
+
+
+
+
+
+
+<div id="pdfList"
+class="pdf-list">
+
+
+</div>
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+
+
+<button
+
+id="mergePDF"
+
+class="merge-button">
+
+
+Merge PDF
+
+
+</button>
+
+
+
+
+
+
+
+
+<section class="info-cards">
+
+
+
+
+
+<div class="info-card">
+
+
+<h3>
+
+📑 Smart Ordering
+
+</h3>
+
+
+<p>
+
+Arrange documents before merging.
+
+</p>
+
+
+</div>
+
+
+
+
+
+
+
+<div class="info-card">
+
+
+<h3>
+
+🔒 Private
+
+</h3>
+
+
+<p>
+
+Processing happens locally.
+
+</p>
+
+
+</div>
+
+
+
+
+
+
+
+<div class="info-card">
+
+
+<h3>
+
+✍ Metadata
+
+</h3>
+
+
+<p>
+
+Add title and author details.
+
+</p>
+
+
+</div>
+
+
+
+
+
+
+</section>
+
+
+
+
+
+
+
+</main>
+
+
+
+
+
+
+
+
+
+<script src="../libs/jszip.min.js"></script>
+
+<script src="../libs/pdf-lib.min.js"></script>
+
+<script src="../libs/sortable.min.js"></script>
+
+
+
+
+
+<script src="../js/app.js"></script>
+
+<script src="../js/loader.js"></script>
+
+
+
+
+
+<script src="../js/merge/pdf-reader.js"></script>
+
+<script src="../js/merge/pdf-sort.js"></script>
+
+<script src="../js/merge/pdf-merger.js"></script>
+
+<script src="../js/merge/download.js"></script>
+
+<script src="../js/merge/app.js"></script>
+
+
+
+
+
+
+</body>
+
+</html>
